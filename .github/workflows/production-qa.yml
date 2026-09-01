@@ -1,0 +1,27 @@
+name: Production QA
+on: {push: {branches: [main]}, workflow_dispatch: {}}
+permissions: {statuses: read, checks: read, deployments: read}
+jobs:
+  production-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env: {PRODUCTION_URL: 'https://tasksk008.vercel.app'}
+    steps:
+      - uses: actions/checkout@v4
+      - id: probe
+        run: |
+          code=$(curl -L -sS -o /tmp/site -w '%{http_code}' --max-time 20 "$PRODUCTION_URL" || true); bytes=$(wc -c </tmp/site 2>/dev/null||echo 0); if [[ "$code" =~ ^[23][0-9][0-9]$ && "$bytes" -gt 100 ]]; then echo 'live=true' >> "$GITHUB_OUTPUT"; else echo 'live=false' >> "$GITHUB_OUTPUT"; fi
+      - if: steps.probe.outputs.live != 'true'
+        run: echo 'GitHub-ready; retry after Vercel Git import.' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-node@v4
+        if: steps.probe.outputs.live == 'true'
+        with: {node-version: '20'}
+      - if: steps.probe.outputs.live == 'true'
+        run: npm install --no-audit --no-fund
+      - if: steps.probe.outputs.live == 'true'
+        run: npx playwright install --with-deps chromium
+      - if: steps.probe.outputs.live == 'true'
+        run: npm run qa:production
+      - if: always() && steps.probe.outputs.live == 'true'
+        uses: actions/upload-artifact@v4
+        with: {name: 'production-qa-${{ github.sha }}', path: 'qa-artifacts/', retention-days: 14}
